@@ -30,7 +30,7 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 
 # Estados para conversaciones
 (ASKING_AGE, ASKING_GENDER, SYMPTOM_DETAIL, RISK_ASSESSMENT, 
- APPOINTMENT_BOOKING) = range(5)
+ APPOINTMENT_BOOKING, FEEDBACK_RATING) = range(6)
 
 class UserSessionManager:
     """Gestiona las sesiones de usuario en memoria"""
@@ -206,7 +206,7 @@ class ETSBotAdvanced:
                 ]
             }
         }
-        
+
         # Configurar conversación estructurada
         conv_handler = ConversationHandler(
             entry_points=[
@@ -218,7 +218,8 @@ class ETSBotAdvanced:
                 ASKING_GENDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.collect_gender)],
                 SYMPTOM_DETAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.collect_symptoms)],
                 RISK_ASSESSMENT: [CallbackQueryHandler(self.handle_risk_callback)],
-                APPOINTMENT_BOOKING: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_appointment)]
+                APPOINTMENT_BOOKING: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_appointment)],
+                FEEDBACK_RATING: [CallbackQueryHandler(self.handle_feedback)]
             },
             fallbacks=[CommandHandler("cancelar", self.cancel_conversation)]
         )
@@ -245,6 +246,7 @@ class ETSBotAdvanced:
             [InlineKeyboardButton("🧪 Guía de Pruebas", callback_data="test_guide")],
             [InlineKeyboardButton("🏥 Encontrar Centros", callback_data="find_centers")],
             [InlineKeyboardButton("📅 Agendar Cita", callback_data="book_appointment")],
+            [InlineKeyboardButton("💬 Chat Libre", callback_data="free_chat")],
             [InlineKeyboardButton("⚙️ Mi Perfil", callback_data="profile"), 
              InlineKeyboardButton("🆘 Emergencia", callback_data="emergency")]
         ]
@@ -321,21 +323,16 @@ class ETSBotAdvanced:
         """
         
         keyboard = [
+            [InlineKeyboardButton("✏️ Editar perfil", callback_data="edit_profile")],
+            [InlineKeyboardButton("📊 Ver estadísticas", callback_data="view_stats")],
             [InlineKeyboardButton("🏠 Menú principal", callback_data="menu")]
         ]
         
-        if update.callback_query:
-            await update.callback_query.edit_message_text(
-                profile_text,
-                parse_mode='Markdown',
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        else:
-            await update.message.reply_text(
-                profile_text,
-                parse_mode='Markdown',
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
+        await update.message.reply_text(
+            profile_text,
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
     def get_personalized_recommendations(self, user_data: Dict) -> str:
         age = user_data.get('age', 0)
@@ -464,10 +461,7 @@ Puedes mencionar:
 • Situaciones de riesgo recientes
 • Cualquier otra preocupación
 
-**Ejemplos:**
-• "Tengo una llaga en el área genital y me duele al orinar."
-• "Tengo una secreción inusual y picazón."
-• "Me hice una prueba de VIH y me salió negativa, pero tengo miedo de haberme contagiado de otra cosa."
+*Sé lo más específico/a posible para una mejor evaluación.*
         """
         await query.edit_message_text(text, parse_mode='Markdown')
         return SYMPTOM_DETAIL
@@ -511,6 +505,20 @@ Puedes mencionar:
             response_text,
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+        # Solicitar feedback
+        feedback_keyboard = [
+            [InlineKeyboardButton("⭐⭐⭐⭐⭐", callback_data="rating_5")],
+            [InlineKeyboardButton("⭐⭐⭐⭐", callback_data="rating_4")],
+            [InlineKeyboardButton("⭐⭐⭐", callback_data="rating_3")],
+            [InlineKeyboardButton("⭐⭐", callback_data="rating_2")],
+            [InlineKeyboardButton("⭐", callback_data="rating_1")]
+        ]
+        
+        await update.message.reply_text(
+            "💭 **¿Qué tan útil fue esta evaluación?**",
+            reply_markup=InlineKeyboardMarkup(feedback_keyboard)
         )
         
         return ConversationHandler.END
@@ -637,231 +645,615 @@ Centros recomendados cerca de ti:
             keyboard = []
             for i, center in enumerate(city_data['centros'][:3]):  # Máximo 3 centros
                 text += f"""
-**{i+1}. {center['nombre']}**
-• Dirección: {center['direccion']}
-• Teléfono: {center['telefono']}
-• Servicios: {', '.join(center['servicios'])}
-• Horarios: {center['horarios']}
-"""
-            keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data="menu")])
+
+**{center['nombre']}**
+📍 {center['direccion']}
+📞 {center['telefono']}
+🕒 {center['horarios']}
+🏥 Servicios: {', '.join(center['servicios'])}
+                """
+                keyboard.append([InlineKeyboardButton(f"📞 Llamar a {center['nombre']}", 
+                                                    url=f"tel:{center['telefono']}")])
+            
+            keyboard.extend([
+                [InlineKeyboardButton("🗺️ Ver más centros", callback_data=f"more_centers_{city_key}")],
+                [InlineKeyboardButton("📅 Agendar cita", callback_data="book_appointment")],
+                [InlineKeyboardButton("⬅️ Volver", callback_data="menu")]
+            ])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
         
         if is_location:
-            await update.message.reply_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+            await update.message.reply_text(text, parse_mode='Markdown', reply_markup=reply_markup)
         else:
-            query = update.callback_query
-            await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+            await update.edit_message_text(text, parse_mode='Markdown', reply_markup=reply_markup)
 
-    # ----------------- Funciones faltantes y corregidas -----------------
+    # ----------------- ENCICLOPEDIA INTERACTIVA -----------------
+    async def show_encyclopedia(self, update):
+        query = update.callback_query if hasattr(update, 'callback_query') else update
+        
+        text = """
+📚 **Enciclopedia ETS Interactiva**
 
-    async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+Explora información detallada sobre las infecciones de transmisión sexual más comunes:
+        """
+        
+        keyboard = []
+        for key, ets in self.ets_database.items():
+            prevalence_emoji = "🔴" if ets['prevalencia'] == 'muy alta' else "🟡" if ets['prevalencia'] == 'alta' else "🟢"
+            keyboard.append([InlineKeyboardButton(
+                f"{prevalence_emoji} {ets['nombre']}", 
+                callback_data=f"ets_detail_{key}"
+            )])
+        
+        keyboard.extend([
+            [InlineKeyboardButton("📊 Estadísticas generales", callback_data="general_stats")],
+            [InlineKeyboardButton("🛡️ Guía de prevención", callback_data="prevention_guide")],
+            [InlineKeyboardButton("⬅️ Volver", callback_data="menu")]
+        ])
+        
+        await query.edit_message_text(text, parse_mode='Markdown', 
+                                    reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def show_ets_detail(self, update, ets_key: str):
         query = update.callback_query
-        await query.answer()
-
-        user_id = query.from_user.id
-        user_data = self.session_manager.get_user_data(user_id)
-
-        if query.data == "setup_profile":
-            await query.edit_message_text("✏️ **Configuración de perfil**\n\n¿Cuál es tu edad?", parse_mode='Markdown')
-            return ASKING_AGE
+        ets = self.ets_database.get(ets_key)
         
-        if query.data == "skip_setup" or query.data == "menu":
-            text = "🏠 **Menú Principal**\n\n¿En qué puedo ayudarte hoy?"
-            await query.edit_message_text(text, parse_mode='Markdown', reply_markup=self.get_main_menu(user_id))
-            return ConversationHandler.END
+        if not ets:
+            await query.answer("Información no encontrada")
+            return
         
-        if query.data == "quick_symptoms":
-            text = "🔍 **Síntomas Rápidos**\n\nDescribe en una frase tus síntomas principales. Por ejemplo: 'dolor al orinar y secreción'."
-            await query.edit_message_text(text, parse_mode='Markdown')
-            return SYMPTOM_DETAIL
-
-        if query.data == "encyclopedia":
-            text = "📚 **Enciclopedia de ETS**\n\nSelecciona una enfermedad para ver su información detallada:"
-            ets_keyboard = [[InlineKeyboardButton(f"📋 {ets['nombre']}", callback_data=f"info_{key}")] for key, ets in self.ets_database.items()]
-            ets_keyboard.append([InlineKeyboardButton("⬅️ Volver", callback_data="menu")])
-            await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(ets_keyboard))
-            
-        if query.data.startswith("info_"):
-            ets_key = query.data.replace("info_", "")
-            ets = self.ets_database.get(ets_key)
-            if ets:
-                text = f"""
+        # Determinar síntomas según género del usuario si está disponible
+        user_data = self.session_manager.get_user_data(query.from_user.id)
+        gender = user_data.get('gender', '').lower()
+        
+        sintomas_text = f"**Síntomas comunes:**\n• {chr(10).join(ets['sintomas']['comunes'])}\n"
+        
+        if 'hombres' in ets['sintomas'] and 'masculino' in gender:
+            sintomas_text += f"\n**Específicos en hombres:**\n• {chr(10).join(ets['sintomas']['hombres'])}\n"
+        elif 'mujeres' in ets['sintomas'] and 'femenino' in gender:
+            sintomas_text += f"\n**Específicos en mujeres:**\n• {chr(10).join(ets['sintomas']['mujeres'])}\n"
+        
+        text = f"""
 📋 **{ets['nombre']}**
+*Tipo: {ets['tipo'].title()} - Prevalencia: {ets['prevalencia'].title()}*
 
-**Tipo:** {ets['tipo'].capitalize()}
-**Prevalencia:** {ets['prevalencia'].capitalize()}
-
-**Síntomas:**
-{', '.join(ets['sintomas']['comunes'])}
-
+{sintomas_text}
 **Información general:**
 {ets['info']}
 
 **Tratamiento:**
 {ets['tratamiento']}
 
+**Tiempo de aparición de síntomas:**
+{ets['tiempo_sintomas']}
+
 **Prevención:**
-{', '.join(ets['prevencion'])}
+• {chr(10).join(ets['prevencion'])}
 
-**Tiempo de aparición de síntomas:** {ets['tiempo_sintomas']}
+**Posibles complicaciones:**
+• {chr(10).join(ets['complicaciones'])}
 
-**Complicaciones:** {', '.join(ets['complicaciones'])}
-                """
-                keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📚 Volver a Enciclopedia", callback_data="encyclopedia")],
-                    [InlineKeyboardButton("🏠 Menú Principal", callback_data="menu")]
-                ])
-                await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
-            else:
-                await query.edit_message_text("Información no encontrada.")
+⚠️ **Nota importante:** {ets['sintomas']['asintomatico']}% de casos pueden ser asintomáticos.
 
-        if query.data == "test_guide":
-            text = """
-🧪 **Guía de Pruebas de ETS**
-
-**¿Cuándo hacerme una prueba?**
-• Si has tenido relaciones sexuales sin protección.
-• Antes de iniciar una nueva relación sexual.
-• Si tu pareja sexual te informa de una ETS.
-• Al presentar síntomas.
-• Anualmente si eres sexualmente activo.
-
-**¿Qué esperar?**
-Las pruebas pueden ser de sangre, orina o hisopado, dependiendo de la ETS. Son procedimientos rápidos y confidenciales.
-
-**Recuerda:** Los Centros de Salud Públicos suelen ofrecer pruebas gratuitas.
-"""
-            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Volver", callback_data="menu")]])
-            await query.edit_message_text(text, parse_mode='Markdown', reply_markup=keyboard)
-
-        if query.data == "find_centers":
-            text = """
-🏥 **Encontrar Centros Médicos**
-
-Para encontrar los centros más cercanos, por favor, **comparte tu ubicación** o selecciona una ciudad de la lista.
-"""
-            await query.edit_message_text(text, parse_mode='Markdown', reply_markup=self.get_location_keyboard())
-
-        if query.data == "emergency":
-            await self.emergency(update, context)
-
-        # Lógica para los botones que faltaban
-        if query.data == "profile":
-            await self.profile_command(update, context)
-
-    async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
-        text = update.message.text.lower()
+💡 *Solo un profesional médico puede realizar un diagnóstico definitivo.*
+        """
         
-        # Lógica para manejar texto de ciudades
-        city_map = {
-            'ciudad de méxico': 'ciudad_mexico',
-            'guadalajara': 'guadalajara',
-            'monterrey': 'monterrey',
-            'cancún': 'cancun'
-        }
+        keyboard = [
+            [InlineKeyboardButton("🧪 Pruebas recomendadas", callback_data=f"tests_{ets_key}")],
+            [InlineKeyboardButton("🏥 Encontrar centros", callback_data="find_centers")],
+            [InlineKeyboardButton("📚 Volver a enciclopedia", callback_data="encyclopedia")],
+            [InlineKeyboardButton("🏠 Menú principal", callback_data="menu")]
+        ]
         
-        if text in city_map:
-            await self.show_medical_centers_for_city(update, city_map[text], is_location=True)
-            return
+        await query.edit_message_text(text, parse_mode='Markdown', 
+                                    reply_markup=InlineKeyboardMarkup(keyboard))
 
-        # Si el flujo de conversación no está activo, redirigir al menú principal
-        if context.user_data.get('state', None) is None:
-            await update.message.reply_text(
-                "Por favor, usa los botones del menú para interactuar conmigo.",
-                reply_markup=self.get_main_menu(user_id)
-            )
-        # La lógica de ConversationHandler se encargará de las respuestas dentro de un estado
-
-    async def handle_risk_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # Esta función podría manejar interacciones con botones dentro de la evaluación de riesgo
+    # ----------------- GUÍA DE PRUEBAS MÉDICAS -----------------
+    async def show_test_guide(self, update):
         query = update.callback_query
-        await query.answer()
-        # Por ahora, solo termina la conversación
-        await query.edit_message_text("¡Gracias por completar la evaluación!", parse_mode='Markdown')
-        return ConversationHandler.END
+        user_data = self.session_manager.get_user_data(query.from_user.id)
+        age = user_data.get('age', 0)
+        
+        text = f"""
+🧪 **Guía Completa de Pruebas de ETS**
 
+**Pruebas recomendadas según tu perfil:**
+{self.get_recommended_tests(user_data)}
+
+**Tipos de pruebas disponibles:**
+
+🩸 **Análisis de sangre:**
+• VIH, Sífilis, Hepatitis B/C
+• Tiempo: 3-12 semanas post-exposición
+• Ayuno: No necesario
+
+🧪 **Análisis de orina:**
+• Clamidia, Gonorrea
+• Tiempo: 1-2 semanas post-exposición
+• Primera orina del día
+
+🔬 **Hisopado genital:**
+• Herpes, VPH, Clamidia, Gonorrea
+• Tiempo: Inmediato si hay síntomas
+• Más preciso para diagnóstico
+
+**Frecuencia recomendada:**
+• Personas sexualmente activas: Anual
+• Alto riesgo: Cada 3-6 meses
+• Nueva pareja: Antes del contacto sin protección
+
+**Preparación para las pruebas:**
+• No orinar 2 horas antes (orina)
+• No duchas vaginales 24h antes
+• Informar medicamentos actuales
+        """
+        
+        keyboard = [
+            [InlineKeyboardButton("🏥 Dónde hacerse pruebas", callback_data="find_centers")],
+            [InlineKeyboardButton("💰 Costos aproximados", callback_data="test_costs")],
+            [InlineKeyboardButton("📅 Agendar cita", callback_data="book_appointment")],
+            [InlineKeyboardButton("⬅️ Volver", callback_data="menu")]
+        ]
+        
+        await query.edit_message_text(text, parse_mode='Markdown', 
+                                    reply_markup=InlineKeyboardMarkup(keyboard))
+
+    def get_recommended_tests(self, user_data: Dict) -> str:
+        age = user_data.get('age', 0)
+        gender = user_data.get('gender', '').lower()
+        risk_level = user_data.get('risk_level', 'unknown')
+        
+        tests = []
+        
+        # Pruebas básicas para todos
+        tests.append("• Panel básico de ETS (Clamidia, Gonorrea, Sífilis, VIH)")
+        
+        if age and age <= 26:
+            tests.append("• Considerrar vacuna VPH si no la has recibido")
+        
+        if 'femenino' in gender:
+            tests.append("• Papanicolaou (detección VPH)")
+            tests.append("• Cultivo vaginal si hay síntomas")
+        
+        if risk_level == 'high':
+            tests.append("• Panel completo incluyendo Hepatitis B/C")
+            tests.append("• Repetir en 3 meses")
+        
+        return "\n".join(tests) if tests else "• Consulta con médico para recomendación personalizada"
+
+    # ----------------- SISTEMA DE CITAS -----------------
     async def start_appointment(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
+        
         text = """
-📅 **Agendar una cita**
+📅 **Agendar Cita Médica**
 
-Este servicio es solo una simulación. Escribe la fecha y hora preferida para tu cita y el bot te dará una confirmación de prueba.
-
-Ejemplo: `Mañana a las 10:00 AM`
-"""
-        await query.edit_message_text(text, parse_mode='Markdown')
+Te ayudo a preparar tu cita médica. ¿Qué tipo de consulta necesitas?
+        """
+        
+        keyboard = [
+            [InlineKeyboardButton("🔍 Evaluación de síntomas", callback_data="appt_symptoms")],
+            [InlineKeyboardButton("🧪 Pruebas de ETS", callback_data="appt_tests")],
+            [InlineKeyboardButton("💊 Seguimiento de tratamiento", callback_data="appt_followup")],
+            [InlineKeyboardButton("🛡️ Consulta preventiva", callback_data="appt_prevention")],
+            [InlineKeyboardButton("❌ Cancelar", callback_data="menu")]
+        ]
+        
+        await query.edit_message_text(text, parse_mode='Markdown', 
+                                    reply_markup=InlineKeyboardMarkup(keyboard))
         return APPOINTMENT_BOOKING
 
     async def handle_appointment(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        appointment_text = update.message.text
-        confirmation_text = f"""
-✅ **¡Cita Agendada!**
+        if update.callback_query:
+            query = update.callback_query
+            appointment_type = {
+                'appt_symptoms': 'Evaluación de síntomas',
+                'appt_tests': 'Pruebas de ETS',
+                'appt_followup': 'Seguimiento de tratamiento',
+                'appt_prevention': 'Consulta preventiva'
+            }.get(query.data, 'Consulta general')
+            
+            text = f"""
+📋 **Preparación para tu cita: {appointment_type}**
 
-Hemos recibido tu solicitud para una cita para el:
-**{appointment_text}**
+**Información que debes preparar:**
+• Lista de síntomas y cuándo comenzaron
+• Historial sexual reciente
+• Medicamentos que tomas actualmente
+• Preguntas que quieres hacer al médico
 
-Un profesional médico se pondrá en contacto contigo a través de este chat para confirmar los detalles.
-"""
-        await update.message.reply_text(confirmation_text, parse_mode='Markdown')
+**Documentos a llevar:**
+• Identificación oficial
+• Credencial de seguro médico (si aplica)
+• Resultados de pruebas previas
+
+**Lista de centros médicos cercanos:**
+            """
+            
+            keyboard = [
+                [InlineKeyboardButton("🏥 Ver centros médicos", callback_data="find_centers")],
+                [InlineKeyboardButton("📋 Lista de preparación", callback_data="appointment_checklist")],
+                [InlineKeyboardButton("💬 Preguntas frecuentes", callback_data="appointment_faq")],
+                [InlineKeyboardButton("✅ Listo, buscar centros", callback_data="find_centers")]
+            ]
+            
+            await query.edit_message_text(text, parse_mode='Markdown', 
+                                        reply_markup=InlineKeyboardMarkup(keyboard))
+        
         return ConversationHandler.END
+
+    # ----------------- CHAT LIBRE INTELIGENTE -----------------
+    async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        text = update.message.text.lower()
+        user_data = self.session_manager.get_user_data(user_id)
+        
+        # Actualizar interacciones
+        self.session_manager.update_session(user_id, {'last_message': text})
+        
+        # Análisis avanzado del texto con respuestas contextuales
+        response = self.generate_intelligent_response(text, user_data)
+        
+        await update.message.reply_text(
+            response, 
+            parse_mode='Markdown', 
+            reply_markup=self.get_main_menu(user_id)
+        )
+
+    def generate_intelligent_response(self, text: str, user_data: Dict) -> str:
+        """Genera respuestas inteligentes basadas en contexto y historial"""
+        
+        # Respuestas contextuales por categorías
+        responses = {
+            'dolor_sintomas': {
+                'keywords': ['dolor', 'duele', 'molestia', 'ardor', 'quema'],
+                'response': """
+⚠️ **Síntomas de Dolor**
+
+El dolor en la zona genital puede indicar:
+• **Infecciones bacterianas** (Clamidia, Gonorrea)
+• **Infecciones del tracto urinario**
+• **Irritación por productos químicos**
+
+**Recomendaciones inmediatas:**
+• Evita jabones perfumados en la zona íntima
+• Usa ropa interior de algodón
+• Mantén buena hidratación
+• {personalized_advice}
+
+🏥 **Busca atención médica si:**
+• El dolor empeora o persiste >48 horas
+• Hay fiebre asociada
+• Dificultad para orinar
+                """
+            },
+            'secrecion_flujo': {
+                'keywords': ['secreción', 'flujo', 'líquido', 'descarga', 'supura'],
+                'response': """
+🔍 **Secreción Genital Anormal**
+
+**Características a observar:**
+• **Color:** Normal (claro/blanco) vs. Anormal (amarillo/verde/gris)
+• **Olor:** Sin olor fuerte vs. Olor desagradable
+• **Consistencia:** Textura y cantidad
+
+**Posibles causas:**
+• **Bacterianas:** Clamidia, Gonorrea
+• **Por hongos:** Candidiasis
+• **Parasitarias:** Tricomoniasis
+
+**No hagas:**
+• Duchas vaginales
+• Automedicación con antibióticos
+• Ignorar cambios persistentes
+
+{personalized_advice}
+                """
+            },
+            'lesiones_heridas': {
+                'keywords': ['ampolla', 'llaga', 'herida', 'úlcera', 'roncha', 'verruga'],
+                'response': """
+🚨 **Lesiones Genitales - Atención Prioritaria**
+
+**Tipos de lesiones y posibles causas:**
+• **Ampollas dolorosas:** Herpes genital
+• **Úlceras indoloras:** Sífilis primaria  
+• **Verrugas:** VPH (Virus del Papiloma Humano)
+• **Lesiones irregulares:** Requieren evaluación urgente
+
+**⚠️ IMPORTANTE:**
+• No toques ni revientes las lesiones
+• Evita contacto sexual hasta diagnóstico
+• Lávate las manos después del contacto
+
+**Busca atención médica URGENTE - estas lesiones requieren evaluación profesional inmediata.**
+
+{personalized_advice}
+                """
+            },
+            'prevencion': {
+                'keywords': ['prevenir', 'evitar', 'proteger', 'cuidar', 'seguro'],
+                'response': """
+🛡️ **Prevención Efectiva de ETS**
+
+**Métodos más efectivos:**
+1. **Preservativos** - 98% efectividad si se usan correctamente
+2. **Comunicación** - Hablar abiertamente con parejas
+3. **Pruebas regulares** - Detectar infecciones asintomáticas
+4. **Vacunación** - VPH y Hepatitis B disponibles
+
+**Estrategias personalizadas para ti:**
+{personalized_advice}
+
+**¿Sabías que?** Muchas ETS son asintomáticas, por eso las pruebas regulares son clave.
+                """
+            },
+            'pruebas_tests': {
+                'keywords': ['prueba', 'test', 'examen', 'análisis', 'laboratorio'],
+                'response': """
+🧪 **Guía de Pruebas de ETS**
+
+**Recomendaciones según tu perfil:**
+{personalized_advice}
+
+**Tipos de pruebas principales:**
+• **Sangre:** VIH, Sífilis, Hepatitis (3-12 semanas post-exposición)
+• **Orina:** Clamidia, Gonorrea (1-2 semanas post-exposición)
+• **Hisopado:** Herpes, VPH (inmediato si hay síntomas)
+
+**Ventana de detección:** Tiempo necesario para que una prueba sea confiable después de la exposición.
+
+💡 **Tip:** Las pruebas son más precisas después del período de ventana.
+                """
+            }
+        }
+        
+        # Buscar categoría más relevante
+        for category, data in responses.items():
+            if any(keyword in text for keyword in data['keywords']):
+                # Personalizar respuesta
+                personalized = self.get_personalized_advice(category, user_data)
+                response = data['response'].format(personalized_advice=personalized)
+                return response
+        
+        # Respuestas generales inteligentes
+        if any(word in text for word in ['hola', 'buenos', 'buenas']):
+            return f"""
+¡Hola! 👋 
+
+Soy tu asistente de salud sexual. Puedo ayudarte con:
+• Evaluación de síntomas
+• Información sobre ETS
+• Guía de pruebas médicas
+• Localización de centros médicos
+
+**{self.get_personalized_greeting(user_data)}**
+
+¿En qué puedo ayudarte hoy?
+            """
+        
+        elif any(word in text for word in ['gracias', 'thank']):
+            return """
+¡De nada! 😊
+
+Recuerda que tu salud sexual es importante. Si tienes más dudas o necesitas orientación, estoy aquí para ayudarte.
+
+🔒 Todo es completamente confidencial.
+            """
+        
+        # Respuesta por defecto más inteligente
+        return f"""
+💬 **Consulta de Salud Sexual**
+
+Entiendo que tienes dudas sobre salud sexual. 
+
+**Puedo ayudarte específicamente con:**
+• Análisis de síntomas que describas
+• Información sobre prevención
+• Orientación sobre pruebas médicas
+• Localización de centros de atención
+
+{self.get_personalized_advice('general', user_data)}
+
+💡 **Tip:** Sé específico/a con tus síntomas o preguntas para darte mejor orientación.
+        """
+
+    def get_personalized_advice(self, category: str, user_data: Dict) -> str:
+        """Genera consejos personalizados basados en el perfil del usuario"""
+        
+        age = user_data.get('age', 0)
+        gender = user_data.get('gender', '').lower()
+        risk_level = user_data.get('risk_level', 'unknown')
+        
+        advice = []
+        
+        if category == 'dolor_sintomas':
+            if risk_level == 'high':
+                advice.append("Dado tu nivel de riesgo, considera hacerte pruebas completas")
+            if age and age < 25:
+                advice.append("A tu edad, Clamidia y Gonorrea son más comunes")
+        
+        elif category == 'prevencion':
+            if age and age <= 26:
+                advice.append("La vacuna VPH es especialmente recomendada a tu edad")
+            if risk_level != 'low':
+                advice.append("Considera pruebas cada 3-6 meses dada tu situación")
+        
+        elif category == 'pruebas_tests':
+            if 'femenino' in gender:
+                advice.append("Incluye Papanicolaou para detección de VPH")
+            if age and age < 25:
+                advice.append("Enfócate en pruebas de Clamidia y Gonorrea")
+        
+        return " • ".join(advice) if advice else "Consulta médica para recomendación personalizada"
+
+    def get_personalized_greeting(self, user_data: Dict) -> str:
+        """Genera saludos personalizados"""
+        
+        age = user_data.get('age')
+        if age:
+            if age < 25:
+                return "Veo que eres joven, la prevención es clave a tu edad"
+            elif age >= 25:
+                return "La salud sexual es importante a cualquier edad"
+        
+        return "Tu salud sexual es mi prioridad"
+
+    # ----------------- CALLBACKS Y NAVEGACIÓN -----------------
+    async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        
+        callback_handlers = {
+            "menu": self.show_main_menu_callback,
+            "encyclopedia": self.show_encyclopedia,
+            "test_guide": self.show_test_guide,
+            "find_centers": self.show_location_options,
+            "emergency": self.show_emergency_info,
+            "quick_symptoms": self.show_quick_symptoms,
+            "free_chat": self.show_free_chat_info,
+            "profile": self.show_profile_callback,
+            "setup_profile": self.setup_profile_callback,
+            "skip_setup": self.skip_setup_callback
+        }
+        
+        # Manejar callbacks específicos
+        if query.data.startswith("ets_detail_"):
+            ets_key = query.data.replace("ets_detail_", "")
+            await self.show_ets_detail(query, ets_key)
+        elif query.data.startswith("rating_"):
+            await self.handle_feedback_rating(query)
+        elif query.data.startswith("city_"):
+            city = query.data.replace("city_", "")
+            await self.show_medical_centers_for_city(query, city)
+        elif query.data in callback_handlers:
+            await callback_handlers[query.data](query)
+        else:
+            await query.edit_message_text(
+                "⚠️ Opción no reconocida. Volviendo al menú principal.",
+                reply_markup=self.get_main_menu(query.from_user.id)
+            )
+
+    async def show_main_menu_callback(self, query):
+        text = "🏥 **Menú Principal**\n\n¿En qué puedo ayudarte hoy?"
+        await query.edit_message_text(
+            text, 
+            parse_mode='Markdown', 
+            reply_markup=self.get_main_menu(query.from_user.id)
+        )
+
+    async def show_location_options(self, query):
+        text = """
+📍 **Encontrar Centros Médicos**
+
+Selecciona tu ubicación para encontrar centros especializados cerca de ti:
+        """
+        
+        keyboard = [
+            [InlineKeyboardButton("📍 Compartir ubicación", callback_data="share_location")],
+            [InlineKeyboardButton("🏙️ Ciudad de México", callback_data="city_ciudad_mexico")],
+            [InlineKeyboardButton("🌆 Guadalajara", callback_data="city_guadalajara")],
+            [InlineKeyboardButton("🏘️ Monterrey", callback_data="city_monterrey")],
+            [InlineKeyboardButton("🏖️ Otras ciudades", callback_data="other_cities")],
+            [InlineKeyboardButton("⬅️ Volver", callback_data="menu")]
+        ]
+        
+        await query.edit_message_text(text, parse_mode='Markdown', 
+                                    reply_markup=InlineKeyboardMarkup(keyboard))
+
+    async def show_emergency_info(self, query):
+        text = """
+🆘 **INFORMACIÓN DE EMERGENCIA**
+
+**¿Cuándo buscar atención inmediata?**
+• Dolor severo que no mejora
+• Fiebre alta (>38.5°C) con síntomas genitales
+• Sangrado abundante anormal
+• Lesiones genitales que crecen rápidamente
+• Dificultad severa para orinar
+
+**Números de emergencia México:**
+• **911** - Emergencias médicas
+• **065** - Cruz Roja Mexicana
+• **Locatel:** 56-58-1111 (CDMX)
+• **Tel-SIDA:** 800-712-0886
+
+**Centros de atención 24/7:**
+• Hospitales públicos de tu localidad
+• Clínicas privadas con urgencias
+• Centros de salud con guardia nocturna
+
+⚠️ **No esperes** si presentas síntomas graves.
+        """
+        
+        keyboard = [
+            [InlineKeyboardButton("🏥 Centros médicos", callback_data="find_centers")],
+            [InlineKeyboardButton("📞 Más números útiles", callback_data="more_emergency_numbers")],
+            [InlineKeyboardButton("⬅️ Volver", callback_data="menu")]
+        ]
+        
+        await query.edit_message_text(text, parse_mode='Markdown', 
+                                    reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def cancel_conversation(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
-            "❌ **Conversación cancelada.**\n\n¿En qué más puedo ayudarte?",
+            "❌ **Conversación cancelada**\n\nVolviendo al menú principal.",
+            parse_mode='Markdown',
             reply_markup=self.get_main_menu(update.effective_user.id)
         )
         return ConversationHandler.END
 
-    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        help_text = """
-ℹ️ **Ayuda - Asistente de Salud Sexual**
+    async def handle_feedback_rating(self, query):
+        rating = int(query.data.replace("rating_", ""))
+        user_id = query.from_user.id
+        
+        # Guardar rating (en producción usarías una base de datos)
+        user_data = self.session_manager.get_user_data(user_id)
+        user_data['last_rating'] = rating
+        
+        thank_you_messages = {
+            5: "¡Excelente! 🌟 Me alegra haber sido de gran ayuda.",
+            4: "¡Muy bien! 😊 Gracias por tu feedback positivo.",
+            3: "¡Bien! 👍 Seguiré mejorando para ayudarte mejor.",
+            2: "Gracias por tu honestidad. 💭 ¿Hay algo específico que pueda mejorar?",
+            1: "Lamento no haber cumplido tus expectativas. 😔 Tu feedback me ayuda a mejorar."
+        }
+        
+        await query.edit_message_text(
+            f"⭐ **Rating: {rating}/5**\n\n{thank_you_messages[rating]}",
+            parse_mode='Markdown'
+        )
 
-**Comandos:**
-• /start - Iniciar
-• /perfil - Ver mi perfil
-• /ayuda - Esta ayuda
-• /emergencia - Info de emergencia
-
-**Importante:**
-• Información confidencial
-• No reemplaza consulta médica
-• En emergencia: busca ayuda inmediata
-        """
-        await update.message.reply_text(help_text, parse_mode='Markdown', reply_markup=self.get_main_menu())
-
-    async def emergency(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        text = """
-🆘 **INFORMACIÓN DE EMERGENCIA**
-
-**Números de emergencia México:**
-• 911 - Emergencias
-• 065 - Cruz Roja
-• Locatel: 56-58-1111
-
-🚨 Busca atención médica inmediata si tienes síntomas graves.
-        """
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text, parse_mode='Markdown')
-        else:
-            await update.message.reply_text(text, parse_mode='Markdown')
-
-    async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # Esta es solo una función de ejemplo
-        await update.message.reply_text("📊 **Estadísticas de uso**\n\n(Pronto tendrás acceso a tus estadísticas de salud personal)")
-
+    # ----------------- EJECUCIÓN Y CONFIGURACIÓN -----------------
     def run_webhook(self):
+        """Ejecuta el bot usando webhook para Render"""
         port = int(os.environ.get("PORT", 5000))
+        
+        # Configurar webhook
         self.application.run_webhook(
             listen="0.0.0.0",
             port=port,
-            url_path=TOKEN,
-            webhook_url=f"{WEBHOOK_URL}/{TOKEN}"
+            url_path=self.token,
+            webhook_url=f"{WEBHOOK_URL}/{self.token}",
+            drop_pending_updates=True
         )
+        
+        logger.info(f"Bot iniciado en puerto {port} con webhook {WEBHOOK_URL}")
 
 def main():
-    bot = ETSBotAdvanced(TOKEN)
-    bot.run_webhook()
+    """Función principal"""
+    if not TOKEN or not WEBHOOK_URL:
+        logger.error("Faltan variables de entorno requeridas")
+        return
+    
+    try:
+        bot = ETSBotAdvanced(TOKEN)
+        logger.info("Bot iniciado correctamente")
+        bot.run_webhook()
+    except Exception as e:
+        logger.error(f"Error al iniciar el bot: {e}")
 
 if __name__ == "__main__":
     main()
