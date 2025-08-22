@@ -28,9 +28,8 @@ logger = logging.getLogger(__name__)
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 
-# Estados para conversaciones
-(ASKING_AGE, ASKING_GENDER, SYMPTOM_DETAIL, RISK_ASSESSMENT, 
- APPOINTMENT_BOOKING, FEEDBACK_RATING) = range(6)
+# Estados para conversaciones (reducidos)
+(ASKING_AGE, ASKING_GENDER, SYMPTOM_DETAIL, APPOINTMENT_BOOKING) = range(4)
 
 class UserSessionManager:
     """Gestiona las sesiones de usuario en memoria"""
@@ -215,11 +214,15 @@ class ETSBotAdvanced:
             ],
             states={
                 ASKING_AGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.collect_age)],
-                ASKING_GENDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.collect_gender)],
+                ASKING_GENDER: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.collect_gender),
+                    CallbackQueryHandler(self.collect_gender)
+                ],
                 SYMPTOM_DETAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.collect_symptoms)],
-                RISK_ASSESSMENT: [CallbackQueryHandler(self.handle_risk_callback)],
-                APPOINTMENT_BOOKING: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_appointment)],
-                FEEDBACK_RATING: [CallbackQueryHandler(self.handle_feedback)]
+                APPOINTMENT_BOOKING: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_appointment),
+                    CallbackQueryHandler(self.handle_appointment)
+                ]
             },
             fallbacks=[CommandHandler("cancelar", self.cancel_conversation)]
         )
