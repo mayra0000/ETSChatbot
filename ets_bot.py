@@ -328,11 +328,18 @@ class ETSBotAdvanced:
             [InlineKeyboardButton("🏠 Menú principal", callback_data="menu")]
         ]
         
-        await update.message.reply_text(
-            profile_text,
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        if update.callback_query:
+            await update.callback_query.edit_message_text(
+                profile_text,
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            await update.message.reply_text(
+                profile_text,
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
 
     def get_personalized_recommendations(self, user_data: Dict) -> str:
         age = user_data.get('age', 0)
@@ -659,7 +666,7 @@ Centros recomendados cerca de ti:
             query = update.callback_query
             await query.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # ----------------- Funciones faltantes -----------------
+    # ----------------- Funciones faltantes y corregidas -----------------
 
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
@@ -751,6 +758,20 @@ Para encontrar los centros más cercanos, por favor, **comparte tu ubicación** 
 
         if query.data == "emergency":
             await self.emergency(update, context)
+
+        # Lógica para los botones que faltaban
+        if query.data == "profile":
+            await self.profile_command(update, context)
+            
+        if query.data == "free_chat":
+            text = """
+💬 **Modo de Chat Libre**
+
+Puedes escribirme cualquier pregunta sobre ETS y salud sexual. Intentaré responderla de la mejor manera posible.
+
+Para volver a los menús, usa el comando /start.
+            """
+            await query.edit_message_text(text, parse_mode='Markdown')
 
     async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
