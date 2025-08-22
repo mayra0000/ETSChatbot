@@ -30,7 +30,7 @@ WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 
 # Estados para conversaciones
 (ASKING_AGE, ASKING_GENDER, SYMPTOM_DETAIL, RISK_ASSESSMENT, 
- APPOINTMENT_BOOKING, FEEDBACK_RATING) = range(6)
+ APPOINTMENT_BOOKING) = range(5)
 
 class UserSessionManager:
     """Gestiona las sesiones de usuario en memoria"""
@@ -218,8 +218,7 @@ class ETSBotAdvanced:
                 ASKING_GENDER: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.collect_gender)],
                 SYMPTOM_DETAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.collect_symptoms)],
                 RISK_ASSESSMENT: [CallbackQueryHandler(self.handle_risk_callback)],
-                APPOINTMENT_BOOKING: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_appointment)],
-                FEEDBACK_RATING: [CallbackQueryHandler(self.handle_feedback)]
+                APPOINTMENT_BOOKING: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_appointment)]
             },
             fallbacks=[CommandHandler("cancelar", self.cancel_conversation)]
         )
@@ -246,7 +245,6 @@ class ETSBotAdvanced:
             [InlineKeyboardButton("🧪 Guía de Pruebas", callback_data="test_guide")],
             [InlineKeyboardButton("🏥 Encontrar Centros", callback_data="find_centers")],
             [InlineKeyboardButton("📅 Agendar Cita", callback_data="book_appointment")],
-            [InlineKeyboardButton("💬 Chat Libre", callback_data="free_chat")],
             [InlineKeyboardButton("⚙️ Mi Perfil", callback_data="profile"), 
              InlineKeyboardButton("🆘 Emergencia", callback_data="emergency")]
         ]
@@ -323,8 +321,6 @@ class ETSBotAdvanced:
         """
         
         keyboard = [
-            [InlineKeyboardButton("✏️ Editar perfil", callback_data="edit_profile")],
-            [InlineKeyboardButton("📊 Ver estadísticas", callback_data="view_stats")],
             [InlineKeyboardButton("🏠 Menú principal", callback_data="menu")]
         ]
         
@@ -468,7 +464,10 @@ Puedes mencionar:
 • Situaciones de riesgo recientes
 • Cualquier otra preocupación
 
-*Sé lo más específico/a posible para una mejor evaluación.*
+**Ejemplos:**
+• "Tengo una llaga en el área genital y me duele al orinar."
+• "Tengo una secreción inusual y picazón."
+• "Me hice una prueba de VIH y me salió negativa, pero tengo miedo de haberme contagiado de otra cosa."
         """
         await query.edit_message_text(text, parse_mode='Markdown')
         return SYMPTOM_DETAIL
@@ -512,20 +511,6 @@ Puedes mencionar:
             response_text,
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        
-        # Solicitar feedback
-        feedback_keyboard = [
-            [InlineKeyboardButton("⭐⭐⭐⭐⭐", callback_data="rating_5")],
-            [InlineKeyboardButton("⭐⭐⭐⭐", callback_data="rating_4")],
-            [InlineKeyboardButton("⭐⭐⭐", callback_data="rating_3")],
-            [InlineKeyboardButton("⭐⭐", callback_data="rating_2")],
-            [InlineKeyboardButton("⭐", callback_data="rating_1")]
-        ]
-        
-        await update.message.reply_text(
-            "💭 **¿Qué tan útil fue esta evaluación?**",
-            reply_markup=InlineKeyboardMarkup(feedback_keyboard)
         )
         
         return ConversationHandler.END
@@ -762,16 +747,6 @@ Para encontrar los centros más cercanos, por favor, **comparte tu ubicación** 
         # Lógica para los botones que faltaban
         if query.data == "profile":
             await self.profile_command(update, context)
-            
-        if query.data == "free_chat":
-            text = """
-💬 **Modo de Chat Libre**
-
-Puedes escribirme cualquier pregunta sobre ETS y salud sexual. Intentaré responderla de la mejor manera posible.
-
-Para volver a los menús, usa el comando /start.
-            """
-            await query.edit_message_text(text, parse_mode='Markdown')
 
     async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
@@ -829,21 +804,6 @@ Hemos recibido tu solicitud para una cita para el:
 Un profesional médico se pondrá en contacto contigo a través de este chat para confirmar los detalles.
 """
         await update.message.reply_text(confirmation_text, parse_mode='Markdown')
-        return ConversationHandler.END
-
-    async def handle_feedback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        query = update.callback_query
-        await query.answer()
-        rating = int(query.data.replace("rating_", ""))
-        
-        # Aquí podrías guardar el rating en una base de datos para análisis
-        user_id = query.from_user.id
-        logger.info(f"Feedback recibido de {user_id}: {rating} estrellas.")
-        
-        await query.edit_message_text(
-            f"🌟 **¡Gracias por tu valoración de {rating} estrellas!** Tu feedback nos ayuda a mejorar. 😊",
-            parse_mode='Markdown'
-        )
         return ConversationHandler.END
 
     async def cancel_conversation(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
