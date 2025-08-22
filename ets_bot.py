@@ -231,7 +231,6 @@ class ETSBotAdvanced:
         self.application.add_handler(conv_handler)
         self.application.add_handler(CommandHandler("start", self.start))
         self.application.add_handler(CommandHandler("perfil", self.profile_command))
-        self.application.add_handler(CommandHandler("estadisticas", self.stats_command))
         self.application.add_handler(CommandHandler("ayuda", self.help_command))
         self.application.add_handler(CommandHandler("emergencia", self.emergency))
         self.application.add_handler(CallbackQueryHandler(self.handle_callback))
